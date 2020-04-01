@@ -10,6 +10,7 @@ import (
 	"encoding/xml"
 	"flag"
 	"fmt"
+	"github.com/echocat/go-saml"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,7 +20,7 @@ import (
 	"github.com/zenazn/goji"
 	"github.com/zenazn/goji/web"
 
-	"github.com/crewjam/saml/samlsp"
+	"github.com/echocat/go-saml/samlsp"
 )
 
 var links = map[string]Link{}
@@ -32,7 +33,7 @@ type Link struct {
 }
 
 // CreateLink handles requests to create links
-func CreateLink(c web.C, w http.ResponseWriter, r *http.Request) {
+func CreateLink(_ web.C, w http.ResponseWriter, r *http.Request) {
 	account := r.Header.Get("X-Remote-User")
 	l := Link{
 		ShortLink: uniuri.New(),
@@ -41,12 +42,12 @@ func CreateLink(c web.C, w http.ResponseWriter, r *http.Request) {
 	}
 	links[l.ShortLink] = l
 
-	fmt.Fprintf(w, "%s\n", l.ShortLink)
+	_, _ = fmt.Fprintf(w, "%s\n", l.ShortLink)
 	return
 }
 
 // ServeLink handles requests to redirect to a link
-func ServeLink(c web.C, w http.ResponseWriter, r *http.Request) {
+func ServeLink(_ web.C, w http.ResponseWriter, r *http.Request) {
 	l, ok := links[strings.TrimPrefix(r.URL.Path, "/")]
 	if !ok {
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
@@ -57,11 +58,11 @@ func ServeLink(c web.C, w http.ResponseWriter, r *http.Request) {
 }
 
 // ListLinks returns a list of the current user's links
-func ListLinks(c web.C, w http.ResponseWriter, r *http.Request) {
+func ListLinks(_ web.C, w http.ResponseWriter, r *http.Request) {
 	account := r.Header.Get("X-Remote-User")
 	for _, l := range links {
 		if l.Owner == account {
-			fmt.Fprintf(w, "%s\n", l.ShortLink)
+			_, _ = fmt.Fprintf(w, "%s\n", l.ShortLink)
 		}
 	}
 }
@@ -100,8 +101,9 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 )
 
 func main() {
-	rootURLstr := flag.String("url", "https://962766ce.ngrok.io", "The base URL of this service")
-	idpMetadataURLstr := flag.String("idp", "https://516becc2.ngrok.io/metadata", "The metadata URL for the IDP")
+	ctx := context.Background()
+	rootURLstr := flag.String("url", "https://localhost:8000", "The base URL of this service")
+	idpMetadataURLstr := flag.String("idp", "https://samltest.id/saml/idp", "The metadata URL for the IDP")
 	flag.Parse()
 
 	keyPair, err := tls.X509KeyPair(cert, key)
@@ -118,8 +120,7 @@ func main() {
 		panic(err) // TODO handle error
 	}
 
-	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient,
-		*idpMetadataURL)
+	idpMetadata, err := samlsp.FetchMetadata(context.Background(), http.DefaultClient, *idpMetadataURL)
 	if err != nil {
 		panic(err) // TODO handle error
 	}
@@ -141,18 +142,22 @@ func main() {
 	}
 
 	// register with the service provider
-	spMetadataBuf, _ := xml.MarshalIndent(samlSP.ServiceProvider.Metadata(), "", "  ")
+	metadata, err := saml.GetMetadata(ctx, samlSP.ServiceProvider)
+	if err != nil {
+		panic(err) // TODO handle error
+	}
+	spMetadataBuf, _ := xml.MarshalIndent(metadata, "", "  ")
 
 	spURL := *idpMetadataURL
 	spURL.Path = "/services/sp"
-	http.Post(spURL.String(), "text/xml", bytes.NewReader(spMetadataBuf))
+	_, _ = http.Post(spURL.String(), "text/xml", bytes.NewReader(spMetadataBuf))
 
 	goji.Handle("/saml/*", samlSP)
 
 	authMux := web.New()
 	authMux.Use(samlSP.RequireAccount)
 	authMux.Get("/whoami", func(w http.ResponseWriter, r *http.Request) {
-		pretty.Fprintf(w, "%# v", r)
+		_, _ = pretty.Fprintf(w, "%# v", r)
 	})
 	authMux.Post("/", CreateLink)
 	authMux.Get("/", ListLinks)
@@ -160,5 +165,7 @@ func main() {
 	goji.Handle("/*", authMux)
 	goji.Get("/:link", ServeLink)
 
-	goji.Serve()
+	goji.ServeTLS(&tls.Config{
+		Certificates: []tls.Certificate{keyPair},
+	})
 }

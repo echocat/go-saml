@@ -60,64 +60,64 @@ type LogoutRequest struct {
 }
 
 // Element returns an etree.Element representing the object in XML form.
-func (r *LogoutRequest) Element() *etree.Element {
+func (req *LogoutRequest) Element() *etree.Element {
 	el := etree.NewElement("samlp:LogoutRequest")
 	el.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
 	el.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
-	el.CreateAttr("ID", r.ID)
-	el.CreateAttr("Version", r.Version)
-	el.CreateAttr("IssueInstant", r.IssueInstant.Format(timeFormat))
-	if r.Destination != "" {
-		el.CreateAttr("Destination", r.Destination)
+	el.CreateAttr("ID", req.ID)
+	el.CreateAttr("Version", req.Version)
+	el.CreateAttr("IssueInstant", req.IssueInstant.Format(timeFormat))
+	if req.Destination != "" {
+		el.CreateAttr("Destination", req.Destination)
 	}
-	if r.Issuer != nil {
-		el.AddChild(r.Issuer.Element())
+	if req.Issuer != nil {
+		el.AddChild(req.Issuer.Element())
 	}
-	if r.NameID != nil {
-		el.AddChild(r.NameID.Element())
+	if req.NameID != nil {
+		el.AddChild(req.NameID.Element())
 	}
-	if r.Signature != nil {
-		el.AddChild(r.Signature)
+	if req.Signature != nil {
+		el.AddChild(req.Signature)
 	}
-	if r.SessionIndex != nil {
-		el.AddChild(r.SessionIndex.Element())
+	if req.SessionIndex != nil {
+		el.AddChild(req.SessionIndex.Element())
 	}
 	return el
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *LogoutRequest) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (req *LogoutRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias LogoutRequest
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
 		*Alias
 	}{
-		IssueInstant: RelaxedTime(r.IssueInstant),
-		Alias:        (*Alias)(r),
+		IssueInstant: RelaxedTime(req.IssueInstant),
+		Alias:        (*Alias)(req),
 	}
 	return e.Encode(aux)
 }
 
 // UnmarshalXML implements xml.Unmarshaler
-func (r *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+func (req *LogoutRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias LogoutRequest
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
 		*Alias
 	}{
-		Alias: (*Alias)(r),
+		Alias: (*Alias)(req),
 	}
 	if err := d.DecodeElement(&aux, &start); err != nil {
 		return err
 	}
-	r.IssueInstant = time.Time(aux.IssueInstant)
+	req.IssueInstant = time.Time(aux.IssueInstant)
 	return nil
 }
 
 // Bytes returns a byte array representation of the LogoutRequest
-func (r *LogoutRequest) Bytes() ([]byte, error) {
+func (req *LogoutRequest) Bytes() ([]byte, error) {
 	doc := etree.NewDocument()
-	doc.SetRoot(r.Element())
+	doc.SetRoot(req.Element())
 
 	buf, err := doc.WriteToBytes()
 	if err != nil {
@@ -128,8 +128,8 @@ func (r *LogoutRequest) Bytes() ([]byte, error) {
 }
 
 // Deflate returns a compressed byte array of the LogoutRequest
-func (r *LogoutRequest) Deflate() ([]byte, error) {
-	buf, err := r.Bytes()
+func (req *LogoutRequest) Deflate() ([]byte, error) {
+	buf, err := req.Bytes()
 	if err != nil {
 		return nil, err
 	}
@@ -153,33 +153,33 @@ func (r *LogoutRequest) Deflate() ([]byte, error) {
 
 // Element returns an etree.Element representing the object
 // Element returns an etree.Element representing the object in XML form.
-func (r *AuthnRequest) Element() *etree.Element {
+func (req *AuthnRequest) Element() *etree.Element {
 	el := etree.NewElement("samlp:AuthnRequest")
 	el.CreateAttr("xmlns:saml", "urn:oasis:names:tc:SAML:2.0:assertion")
 	el.CreateAttr("xmlns:samlp", "urn:oasis:names:tc:SAML:2.0:protocol")
-	el.CreateAttr("ID", r.ID)
-	el.CreateAttr("Version", r.Version)
-	el.CreateAttr("IssueInstant", r.IssueInstant.Format(timeFormat))
-	if r.Destination != "" {
-		el.CreateAttr("Destination", r.Destination)
+	el.CreateAttr("ID", req.ID)
+	el.CreateAttr("Version", req.Version)
+	el.CreateAttr("IssueInstant", req.IssueInstant.Format(timeFormat))
+	if req.Destination != "" {
+		el.CreateAttr("Destination", req.Destination)
 	}
-	if r.Consent != "" {
-		el.CreateAttr("Consent", r.Consent)
+	if req.Consent != "" {
+		el.CreateAttr("Consent", req.Consent)
 	}
-	if r.Issuer != nil {
-		el.AddChild(r.Issuer.Element())
+	if req.Issuer != nil {
+		el.AddChild(req.Issuer.Element())
 	}
-	if r.Signature != nil {
-		el.AddChild(r.Signature)
+	if req.Signature != nil {
+		el.AddChild(req.Signature)
 	}
-	if r.Subject != nil {
-		el.AddChild(r.Subject.Element())
+	if req.Subject != nil {
+		el.AddChild(req.Subject.Element())
 	}
-	if r.NameIDPolicy != nil {
-		el.AddChild(r.NameIDPolicy.Element())
+	if req.NameIDPolicy != nil {
+		el.AddChild(req.NameIDPolicy.Element())
 	}
-	if r.Conditions != nil {
-		el.AddChild(r.Conditions.Element())
+	if req.Conditions != nil {
+		el.AddChild(req.Conditions.Element())
 	}
 	//if r.RequestedAuthnContext != nil {
 	//	el.AddChild(r.RequestedAuthnContext.Element())
@@ -187,56 +187,56 @@ func (r *AuthnRequest) Element() *etree.Element {
 	//if r.Scoping != nil {
 	//	el.AddChild(r.Scoping.Element())
 	//}
-	if r.ForceAuthn != nil {
-		el.CreateAttr("ForceAuthn", strconv.FormatBool(*r.ForceAuthn))
+	if req.ForceAuthn != nil {
+		el.CreateAttr("ForceAuthn", strconv.FormatBool(*req.ForceAuthn))
 	}
-	if r.IsPassive != nil {
-		el.CreateAttr("IsPassive", strconv.FormatBool(*r.IsPassive))
+	if req.IsPassive != nil {
+		el.CreateAttr("IsPassive", strconv.FormatBool(*req.IsPassive))
 	}
-	if r.AssertionConsumerServiceIndex != "" {
-		el.CreateAttr("AssertionConsumerServiceIndex", r.AssertionConsumerServiceIndex)
+	if req.AssertionConsumerServiceIndex != "" {
+		el.CreateAttr("AssertionConsumerServiceIndex", req.AssertionConsumerServiceIndex)
 	}
-	if r.AssertionConsumerServiceURL != "" {
-		el.CreateAttr("AssertionConsumerServiceURL", r.AssertionConsumerServiceURL)
+	if req.AssertionConsumerServiceURL != "" {
+		el.CreateAttr("AssertionConsumerServiceURL", req.AssertionConsumerServiceURL)
 	}
-	if r.ProtocolBinding != "" {
-		el.CreateAttr("ProtocolBinding", r.ProtocolBinding)
+	if req.ProtocolBinding != "" {
+		el.CreateAttr("ProtocolBinding", req.ProtocolBinding)
 	}
-	if r.AttributeConsumingServiceIndex != "" {
-		el.CreateAttr("AttributeConsumingServiceIndex", r.AttributeConsumingServiceIndex)
+	if req.AttributeConsumingServiceIndex != "" {
+		el.CreateAttr("AttributeConsumingServiceIndex", req.AttributeConsumingServiceIndex)
 	}
-	if r.ProviderName != "" {
-		el.CreateAttr("ProviderName", r.ProviderName)
+	if req.ProviderName != "" {
+		el.CreateAttr("ProviderName", req.ProviderName)
 	}
 	return el
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *AuthnRequest) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (req *AuthnRequest) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias AuthnRequest
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
 		*Alias
 	}{
-		IssueInstant: RelaxedTime(r.IssueInstant),
-		Alias:        (*Alias)(r),
+		IssueInstant: RelaxedTime(req.IssueInstant),
+		Alias:        (*Alias)(req),
 	}
 	return e.Encode(aux)
 }
 
 // UnmarshalXML implements xml.Unmarshaler
-func (r *AuthnRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+func (req *AuthnRequest) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	type Alias AuthnRequest
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
 		*Alias
 	}{
-		Alias: (*Alias)(r),
+		Alias: (*Alias)(req),
 	}
 	if err := d.DecodeElement(&aux, &start); err != nil {
 		return err
 	}
-	r.IssueInstant = time.Time(aux.IssueInstant)
+	req.IssueInstant = time.Time(aux.IssueInstant)
 	return nil
 }
 
@@ -362,7 +362,7 @@ func (r *Response) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *Response) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (r *Response) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias Response
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`
@@ -437,6 +437,7 @@ func (s *StatusCode) Element() *etree.Element {
 // TODO(ross): this value is mostly constant, but is mutated in tests. Fix the hacky test so this can be const.
 var StatusSuccess = "urn:oasis:names:tc:SAML:2.0:status:Success"
 
+//noinspection GoUnusedConst
 const (
 	// The permissible top-level <StatusCode> values are as follows:
 
@@ -1104,7 +1105,7 @@ func (r *LogoutResponse) Element() *etree.Element {
 }
 
 // MarshalXML implements xml.Marshaler
-func (r *LogoutResponse) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+func (r *LogoutResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
 	type Alias LogoutResponse
 	aux := &struct {
 		IssueInstant RelaxedTime `xml:",attr"`

@@ -2,9 +2,10 @@ package samlsp
 
 import (
 	"encoding/xml"
+	"errors"
 	"net/http"
 
-	"github.com/crewjam/saml"
+	"github.com/echocat/go-saml"
 )
 
 // Middleware implements middleware than allows a web application
@@ -47,15 +48,21 @@ type Middleware struct {
 }
 
 // ServeHTTP implements http.Handler and serves the SAML-specific HTTP endpoints
-// on the URIs specified by m.ServiceProvider.MetadataURL and
-// m.ServiceProvider.AcsURL.
+// on the URIs specified by m.NewServiceProvider.MetadataURL and
+// m.NewServiceProvider.AcsURL.
 func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == m.ServiceProvider.MetadataURL.Path {
+	if metadataURL, err := m.ServiceProvider.GetMetadataURL(r.Context()); err != nil {
+		m.OnError(w, r, err)
+		return
+	} else if r.URL.Path == metadataURL.Path {
 		m.serveMetadata(w, r)
 		return
 	}
 
-	if r.URL.Path == m.ServiceProvider.AcsURL.Path {
+	if acsUrl, err := m.ServiceProvider.GetAcsURL(r.Context()); err != nil {
+		m.OnError(w, r, err)
+		return
+	} else if r.URL.Path == acsUrl.Path {
 		m.serveACS(w, r)
 		return
 	}
@@ -64,26 +71,46 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Middleware) serveMetadata(w http.ResponseWriter, r *http.Request) {
-	buf, _ := xml.MarshalIndent(m.ServiceProvider.Metadata(), "", "  ")
+	metadata, err := saml.GetMetadata(r.Context(), m.ServiceProvider)
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
+	buf, err := xml.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
-	w.Write(buf)
+	_, _ = w.Write(buf)
 	return
 }
 
 func (m *Middleware) serveACS(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		m.OnError(w, r, err)
+		return
+	}
 
-	possibleRequestIDs := []string{}
-	if m.ServiceProvider.AllowIDPInitiated {
+	var possibleRequestIDs []string
+
+	if allowIDPInitiated, err := m.ServiceProvider.GetAllowIDPInitiated(r.Context()); err != nil {
+		m.OnError(w, r, err)
+		return
+	} else if allowIDPInitiated {
 		possibleRequestIDs = append(possibleRequestIDs, "")
 	}
 
-	trackedRequests := m.RequestTracker.GetTrackedRequests(r)
+	trackedRequests, err := m.RequestTracker.GetTrackedRequests(r)
+	if err != nil {
+		m.OnError(w, r, err)
+		return
+	}
 	for _, tr := range trackedRequests {
 		possibleRequestIDs = append(possibleRequestIDs, tr.SAMLRequestID)
 	}
 
-	assertion, err := m.ServiceProvider.ParseResponse(r, possibleRequestIDs)
+	assertion, err := saml.ParseResponse(r, m.ServiceProvider, possibleRequestIDs)
 	if err != nil {
 		m.OnError(w, r, err)
 		return
@@ -121,8 +148,12 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 	// end up in a loop. This is a programming error, so we panic here. In
 	// general this means a 500 to the user, which is preferable to a
 	// redirect loop.
-	if r.URL.Path == m.ServiceProvider.AcsURL.Path {
-		panic("don't wrap Middleware with RequireAccount")
+	if acsUrl, err := m.ServiceProvider.GetAcsURL(r.Context()); err != nil {
+		m.OnError(w, r, err)
+		return
+	} else if r.URL.Path == acsUrl.Path {
+		m.OnError(w, r, errors.New("don't wrap Middleware with RequireAccount"))
+		return
 	}
 
 	var binding, bindingLocation string
@@ -138,9 +169,9 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	authReq, err := m.ServiceProvider.MakeAuthenticationRequest(bindingLocation)
+	authReq, err := saml.MakeAuthenticationRequest(r.Context(), m.ServiceProvider, bindingLocation)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		m.OnError(w, r, err)
 		return
 	}
 
@@ -150,7 +181,7 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 	// against the SAML response when we get it.
 	relayState, err := m.RequestTracker.TrackRequest(w, r, authReq.ID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		m.OnError(w, r, err)
 		return
 	}
 
@@ -166,9 +197,9 @@ func (m *Middleware) HandleStartAuthFlow(w http.ResponseWriter, r *http.Request)
 			"script-src 'sha256-AjPdJSbZmeWHnEc5ykvJFay8FTWeTeRbs9dutfZ0HqE='; "+
 			"reflected-xss block; referrer no-referrer;")
 		w.Header().Add("Content-type", "text/html")
-		w.Write([]byte(`<!DOCTYPE html><html><body>`))
-		w.Write(authReq.Post(relayState))
-		w.Write([]byte(`</body></html>`))
+		_, _ = w.Write([]byte(`<!DOCTYPE html><html><body>`))
+		_, _ = w.Write(authReq.Post(relayState))
+		_, _ = w.Write([]byte(`</body></html>`))
 		return
 	}
 	panic("not reached")
@@ -183,7 +214,7 @@ func (m *Middleware) CreateSessionFromAssertion(w http.ResponseWriter, r *http.R
 			m.OnError(w, r, err)
 			return
 		}
-		m.RequestTracker.StopTrackingRequest(w, r, trackedRequestIndex)
+		_ = m.RequestTracker.StopTrackingRequest(w, r, trackedRequestIndex)
 
 		redirectURI = trackedRequest.URI
 	}

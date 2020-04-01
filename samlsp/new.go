@@ -2,121 +2,91 @@
 package samlsp
 
 import (
-	"context"
-	"crypto/rsa"
+	"crypto"
 	"crypto/x509"
-	"net/http"
+	"github.com/echocat/go-saml"
 	"net/url"
-	"time"
-
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/logger"
 )
 
 // Options represents the parameters for creating a new middleware
 type Options struct {
 	EntityID          string
 	URL               url.URL
-	Key               *rsa.PrivateKey
+	ForceAuthn        bool
+	Key               crypto.PrivateKey
 	Certificate       *x509.Certificate
 	Intermediates     []*x509.Certificate
-	AllowIDPInitiated bool
 	IDPMetadata       *saml.EntityDescriptor
-	ForceAuthn        bool // TODO(ross): this should be *bool
-
-	// The following fields exist <= 0.3.0, but are superceded by the new
-	// SessionProvider and RequestTracker interfaces.
-	Logger         logger.Interface // DEPRECATED: this field will be removed, instead provide a custom OnError function to handle errors
-	IDPMetadataURL *url.URL         // DEPRECATED: this field will be removed, instead use FetchMetadata
-	HTTPClient     *http.Client     // DEPRECATED: this field will be removed, instead pass httpClient to FetchMetadata
-	CookieMaxAge   time.Duration    // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
-	CookieName     string           // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
-	CookieDomain   string           // DEPRECATED: this field will be removed. Instead, assign a custom CookieRequestTracker or CookieSessionProvider
-	CookieSecure   bool             // DEPRECATED: this field will be removed, the Secure flag is set on cookies when the root URL uses the https scheme
+	AllowIDPInitiated bool
 }
 
-// DefaultSessionCodec returns the default SessionCodec for the provided options,
+func optionsToCertificatePair(opts Options) saml.CertificatePair {
+	return saml.CertificatePair{
+		Certificate:   opts.Certificate,
+		Intermediates: opts.Intermediates,
+		Key:           opts.Key,
+	}
+}
+func optionsToJwtPatternProvider(opts Options) JWTPatternProvider {
+	return JWTPatternProviderFor(JWTSessionPattern{
+		SigningMethod:   defaultJWTSigningMethod,
+		Audience:        opts.URL.String(),
+		Issuer:          opts.URL.String(),
+		MaxAge:          defaultSessionMaxAge,
+		CertificatePair: optionsToCertificatePair(opts),
+	})
+}
+
+// NewSessionCodec returns the default SessionCodec for the provided options,
 // a JWTSessionCodec configured to issue signed tokens.
-func DefaultSessionCodec(opts Options) JWTSessionCodec {
-
-	// for backwards compatibility, support CookieMaxAge
-	maxAge := defaultSessionMaxAge
-	if opts.CookieMaxAge > 0 {
-		maxAge = opts.CookieMaxAge
-	}
-
-	return JWTSessionCodec{
-		SigningMethod: defaultJWTSigningMethod,
-		Audience:      opts.URL.String(),
-		Issuer:        opts.URL.String(),
-		MaxAge:        maxAge,
-		Key:           opts.Key,
-	}
+func NewSessionCodec(opts Options) (SessionCodec, error) {
+	return &JWTSessionCodec{
+		PatternProvider: optionsToJwtPatternProvider(opts),
+	}, nil
 }
 
-// DefaultSessionProvider returns the default SessionProvider for the provided options,
+// NewSessionProvider returns the default SessionProvider for the provided options,
 // a CookieSessionProvider configured to store sessions in a cookie.
-func DefaultSessionProvider(opts Options) CookieSessionProvider {
-	// for backwards compatibility, support CookieMaxAge
-	maxAge := defaultSessionMaxAge
-	if opts.CookieMaxAge > 0 {
-		maxAge = opts.CookieMaxAge
+func NewSessionProvider(opts Options) (SessionProvider, error) {
+	sessionCodec, err := NewSessionCodec(opts)
+	if err != nil {
+		return nil, err
 	}
-
-	// for backwards compatibility, support CookieName
-	cookieName := defaultSessionCookieName
-	if opts.CookieName != "" {
-		cookieName = opts.CookieName
-	}
-
-	// for backwards compatibility, support CookieDomain
-	cookieDomain := opts.URL.Host
-	if opts.CookieDomain != "" {
-		cookieDomain = opts.CookieDomain
-	}
-
-	// for backwards compatibility, support CookieDomain
-	cookieSecure := opts.URL.Scheme == "https"
-	if opts.CookieSecure {
-		cookieSecure = true
-	}
-
-	return CookieSessionProvider{
-		Name:     cookieName,
-		Domain:   cookieDomain,
-		MaxAge:   maxAge,
-		HTTPOnly: true,
-		Secure:   cookieSecure,
-		Codec:    DefaultSessionCodec(opts),
-	}
+	return &CookieSessionProvider{
+		NameProvider:    DefaultCookieSessionNameProvider(),
+		PatternProvider: CookieSessionPatternProviderFor(defaultSessionMaxAge),
+		Codec:           sessionCodec,
+	}, nil
 }
 
-// DefaultTrackedRequestCodec returns a new TrackedRequestCodec for the provided
+// NewTrackedRequestCodec returns a new TrackedRequestCodec for the provided
 // options, a JWTTrackedRequestCodec that uses a JWT to encode TrackedRequests.
-func DefaultTrackedRequestCodec(opts Options) JWTTrackedRequestCodec {
-	return JWTTrackedRequestCodec{
-		SigningMethod: defaultJWTSigningMethod,
-		Audience:      opts.URL.String(),
-		Issuer:        opts.URL.String(),
-		MaxAge:        saml.MaxIssueDelay,
-		Key:           opts.Key,
-	}
+func NewTrackedRequestCodec(opts Options) (TrackedRequestCodec, error) {
+	return &JWTTrackedRequestCodec{
+		PatternProvider: optionsToJwtPatternProvider(opts),
+	}, nil
 }
 
-// DefaultRequestTracker returns a new RequestTracker for the provided options,
+// NewRequestTracker returns a new RequestTracker for the provided options,
 // a CookieRequestTracker which uses cookies to track pending requests.
-func DefaultRequestTracker(opts Options, serviceProvider *saml.ServiceProvider) CookieRequestTracker {
-	return CookieRequestTracker{
-		ServiceProvider: serviceProvider,
-		NamePrefix:      "saml_",
-		Codec:           DefaultTrackedRequestCodec(opts),
-		MaxAge:          saml.MaxIssueDelay,
+func NewRequestTracker(opts Options, serviceProvider saml.ServiceProvider) (RequestTracker, error) {
+	trackedRequestCodec, err := NewTrackedRequestCodec(opts)
+	if err != nil {
+		return nil, err
 	}
+	return &CookieRequestTracker{
+		ServiceProvider: serviceProvider,
+		PatternProvider: CookieRequestPatternProviderFor(CookieRequestPattern{
+			NamePrefix: "saml_",
+			MaxAge:     saml.MaxIssueDelay,
+		}),
+		Codec: trackedRequestCodec,
+	}, nil
 }
 
-// DefaultServiceProvider returns the default saml.ServiceProvider for the provided
+// NewServiceProvider returns the default saml.DefaultServiceProvider for the provided
 // options.
-func DefaultServiceProvider(opts Options) saml.ServiceProvider {
+func NewServiceProvider(opts Options) (saml.ServiceProvider, error) {
 	metadataURL := opts.URL.ResolveReference(&url.URL{Path: "saml/metadata"})
 	acsURL := opts.URL.ResolveReference(&url.URL{Path: "saml/acs"})
 	sloURL := opts.URL.ResolveReference(&url.URL{Path: "saml/slo"})
@@ -126,53 +96,42 @@ func DefaultServiceProvider(opts Options) saml.ServiceProvider {
 		forceAuthn = &opts.ForceAuthn
 	}
 
-	return saml.ServiceProvider{
+	return &saml.DefaultServiceProvider{
 		EntityID:          opts.EntityID,
-		Key:               opts.Key,
-		Certificate:       opts.Certificate,
-		Intermediates:     opts.Intermediates,
+		CertificatePair:   optionsToCertificatePair(opts),
 		MetadataURL:       *metadataURL,
 		AcsURL:            *acsURL,
 		SloURL:            *sloURL,
 		IDPMetadata:       opts.IDPMetadata,
 		ForceAuthn:        forceAuthn,
 		AllowIDPInitiated: opts.AllowIDPInitiated,
-	}
+	}, nil
 }
 
 // New creates a new Middleware with the default providers for the
 // given options.
 //
 // You can customize the behavior of the middleware in more detail by
-// replacing and/or changing Session, RequestTracker, and ServiceProvider
+// replacing and/or changing Session, RequestTracker, and NewServiceProvider
 // in the returned Middleware.
 func New(opts Options) (*Middleware, error) {
-	// for backwards compatibility, support Logger
-	onError := DefaultOnError
-	if opts.Logger != nil {
-		onError = defaultOnErrorWithLogger(opts.Logger)
+	serviceProvider, err := NewServiceProvider(opts)
+	if err != nil {
+		return nil, err
 	}
-
-	// for backwards compatibility, support IDPMetadataURL
-	if opts.IDPMetadataURL != nil && opts.IDPMetadata == nil {
-		httpClient := opts.HTTPClient
-		if httpClient == nil {
-			httpClient = http.DefaultClient
-		}
-		metadata, err := FetchMetadata(context.TODO(), httpClient, *opts.IDPMetadataURL)
-		if err != nil {
-			return nil, err
-		}
-		opts.IDPMetadata = metadata
+	sessionProvider, err := NewSessionProvider(opts)
+	if err != nil {
+		return nil, err
 	}
-
-	m := &Middleware{
-		ServiceProvider: DefaultServiceProvider(opts),
+	requestTracker, err := NewRequestTracker(opts, serviceProvider)
+	if err != nil {
+		return nil, err
+	}
+	return &Middleware{
+		ServiceProvider: serviceProvider,
 		Binding:         "",
-		OnError:         onError,
-		Session:         DefaultSessionProvider(opts),
-	}
-	m.RequestTracker = DefaultRequestTracker(opts, &m.ServiceProvider)
-
-	return m, nil
+		OnError:         DefaultOnError,
+		Session:         sessionProvider,
+		RequestTracker:  requestTracker,
+	}, nil
 }

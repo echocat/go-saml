@@ -1,6 +1,7 @@
 package samlidp
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
@@ -15,8 +16,8 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/logger"
+	"github.com/echocat/go-saml"
+	"github.com/echocat/go-saml/logger"
 )
 
 type testRandomReader struct {
@@ -66,7 +67,7 @@ func mustParseCertificate(pemStr string) *x509.Certificate {
 type ServerTest struct {
 	SPKey         *rsa.PrivateKey
 	SPCertificate *x509.Certificate
-	SP            saml.ServiceProvider
+	SP            saml.DefaultServiceProvider
 
 	Key         crypto.PrivateKey
 	Certificate *x509.Certificate
@@ -113,9 +114,11 @@ QLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn
 OwJlNCASPZRH/JmF8tX0hoHuAQ==
 -----END CERTIFICATE-----
 `)
-	test.SP = saml.ServiceProvider{
-		Key:         test.SPKey,
-		Certificate: test.SPCertificate,
+	test.SP = saml.DefaultServiceProvider{
+		CertificatePair: saml.CertificatePair{
+			Key:         test.SPKey,
+			Certificate: test.SPCertificate,
+		},
 		MetadataURL: mustParseURL("https://sp.example.com/saml2/metadata"),
 		AcsURL:      mustParseURL("https://sp.example.com/saml2/acs"),
 		IDPMetadata: &saml.EntityDescriptor{},
@@ -138,7 +141,11 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 	}
 
 	test.SP.IDPMetadata = test.Server.IDP.Metadata()
-	test.Server.serviceProviders["https://sp.example.com/saml2/metadata"] = test.SP.Metadata()
+	metadata, err := saml.GetMetadata(context.Background(), &test.SP)
+	if err != nil {
+		panic(err)
+	}
+	test.Server.serviceProviders["https://sp.example.com/saml2/metadata"] = metadata
 	return &test
 }
 
@@ -155,7 +162,7 @@ func TestHTTPCanHandleMetadataRequest(t *testing.T) {
 
 func TestHTTPCanSSORequest(t *testing.T) {
 	test := NewServerTest()
-	u, err := test.SP.MakeRedirectAuthenticationRequest("frob")
+	u, err := saml.MakeRedirectAuthenticationRequest(context.Background(), &test.SP, "frob")
 	assert.NoError(t, err)
 
 	w := httptest.NewRecorder()

@@ -13,7 +13,7 @@ import (
 
 	"github.com/zenazn/goji/web"
 
-	"github.com/crewjam/saml"
+	"github.com/echocat/go-saml"
 )
 
 var sessionMaxAge = time.Hour
@@ -102,7 +102,7 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, req *saml.Id
 // sendLoginForm produces a form which requests a username and password and directs the user
 // back to the IDP authorize URL to restart the SAML login flow, this time establishing a
 // session based on the credentials that were provided.
-func (s *Server) sendLoginForm(w http.ResponseWriter, r *http.Request, req *saml.IdpAuthnRequest, toast string) {
+func (s *Server) sendLoginForm(w http.ResponseWriter, _ *http.Request, req *saml.IdpAuthnRequest, toast string) {
 	tmpl := template.Must(template.New("saml-post-form").Parse(`` +
 		`<html>` +
 		`<p>{{.Toast}}</p>` +
@@ -135,7 +135,7 @@ func (s *Server) sendLoginForm(w http.ResponseWriter, r *http.Request, req *saml
 // in the request body, then they are validated. For valid credentials, the response is a
 // 200 OK and the JSON session object. For invalid credentials, the HTML login prompt form
 // is sent.
-func (s *Server) HandleLogin(c web.C, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleLogin(_ web.C, w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
@@ -144,38 +144,38 @@ func (s *Server) HandleLogin(c web.C, w http.ResponseWriter, r *http.Request) {
 	if session == nil {
 		return
 	}
-	json.NewEncoder(w).Encode(session)
+	_ = json.NewEncoder(w).Encode(session)
 }
 
 // HandleListSessions handles the `GET /sessions/` request and responds with a JSON formatted list
 // of session names.
-func (s *Server) HandleListSessions(c web.C, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleListSessions(_ web.C, w http.ResponseWriter, _ *http.Request) {
 	sessions, err := s.Store.List("/sessions/")
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
-	json.NewEncoder(w).Encode(struct {
+	_ = json.NewEncoder(w).Encode(struct {
 		Sessions []string `json:"sessions"`
 	}{Sessions: sessions})
 }
 
 // HandleGetSession handles the `GET /sessions/:id` request and responds with the session
 // object in JSON format.
-func (s *Server) HandleGetSession(c web.C, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleGetSession(c web.C, w http.ResponseWriter, _ *http.Request) {
 	session := saml.Session{}
 	err := s.Store.Get(fmt.Sprintf("/sessions/%s", c.URLParams["id"]), &session)
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(session)
+	_ = json.NewEncoder(w).Encode(session)
 }
 
 // HandleDeleteSession handles the `DELETE /sessions/:id` request. It invalidates the
 // specified session.
-func (s *Server) HandleDeleteSession(c web.C, w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleDeleteSession(c web.C, w http.ResponseWriter, _ *http.Request) {
 	err := s.Store.Delete(fmt.Sprintf("/sessions/%s", c.URLParams["id"]))
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

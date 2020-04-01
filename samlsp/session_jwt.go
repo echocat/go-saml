@@ -1,14 +1,14 @@
 package samlsp
 
 import (
-	"crypto/rsa"
+	"context"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
 
-	"github.com/crewjam/saml"
+	"github.com/echocat/go-saml"
 )
 
 const defaultSessionMaxAge = time.Hour
@@ -16,26 +16,24 @@ const defaultSessionMaxAge = time.Hour
 // JWTSessionCodec implements SessionCoded to encode and decode Sessions from
 // the corresponding JWT.
 type JWTSessionCodec struct {
-	SigningMethod jwt.SigningMethod
-	Audience      string
-	Issuer        string
-	MaxAge        time.Duration
-	Key           *rsa.PrivateKey
+	PatternProvider JWTPatternProvider
 }
-
-var _ SessionCodec = JWTSessionCodec{}
 
 // New creates a Session from the SAML assertion.
 //
 // The returned Session is a JWTSessionClaims.
-func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
+func (c *JWTSessionCodec) New(ctx context.Context, assertion *saml.Assertion) (Session, error) {
+	pattern, err := c.PatternProvider(ctx)
+	if err != nil {
+		return nil, err
+	}
 	now := saml.TimeNow()
 	claims := JWTSessionClaims{}
 	claims.SAMLSession = true
-	claims.Audience = c.Audience
-	claims.Issuer = c.Issuer
+	claims.Audience = pattern.Audience
+	claims.Issuer = pattern.Issuer
 	claims.IssuedAt = now.Unix()
-	claims.ExpiresAt = now.Add(c.MaxAge).Unix()
+	claims.ExpiresAt = now.Add(pattern.MaxAge).Unix()
 	claims.NotBefore = now.Unix()
 	if sub := assertion.Subject; sub != nil {
 		if nameID := sub.NameID; nameID != nil {
@@ -62,11 +60,15 @@ func (c JWTSessionCodec) New(assertion *saml.Assertion) (Session, error) {
 //
 // The provided session must be a JWTSessionClaims, otherwise this
 // function will panic.
-func (c JWTSessionCodec) Encode(s Session) (string, error) {
+func (c *JWTSessionCodec) Encode(ctx context.Context, s Session) (string, error) {
+	pattern, err := c.PatternProvider(ctx)
+	if err != nil {
+		return "", err
+	}
 	claims := s.(JWTSessionClaims) // this will panic if you pass the wrong kind of session
 
-	token := jwt.NewWithClaims(c.SigningMethod, claims)
-	signedString, err := token.SignedString(c.Key)
+	token := jwt.NewWithClaims(pattern.SigningMethod, claims)
+	signedString, err := token.SignedString(pattern.CertificatePair.Key)
 	if err != nil {
 		return "", err
 	}
@@ -76,23 +78,27 @@ func (c JWTSessionCodec) Encode(s Session) (string, error) {
 
 // Decode parses the serialized session that may have been returned by Encode
 // and returns a Session.
-func (c JWTSessionCodec) Decode(signed string) (Session, error) {
+func (c *JWTSessionCodec) Decode(ctx context.Context, signed string) (Session, error) {
+	pattern, err := c.PatternProvider(ctx)
+	if err != nil {
+		return "", err
+	}
 	parser := jwt.Parser{
-		ValidMethods: []string{c.SigningMethod.Alg()},
+		ValidMethods: []string{pattern.SigningMethod.Alg()},
 	}
 	claims := JWTSessionClaims{}
-	_, err := parser.ParseWithClaims(signed, &claims, func(*jwt.Token) (interface{}, error) {
-		return c.Key.Public(), nil
+	_, err = parser.ParseWithClaims(signed, &claims, func(*jwt.Token) (interface{}, error) {
+		return pattern.CertificatePair.Certificate.PublicKey, nil
 	})
 	// TODO(ross): check for errors due to bad time and return ErrNoSession
 	if err != nil {
 		return nil, err
 	}
-	if !claims.VerifyAudience(c.Audience, true) {
-		return nil, fmt.Errorf("expected audience %q, got %q", c.Audience, claims.Audience)
+	if !claims.VerifyAudience(pattern.Audience, true) {
+		return nil, fmt.Errorf("expected audience %q, got %q", pattern.Audience, claims.Audience)
 	}
-	if !claims.VerifyIssuer(c.Issuer, true) {
-		return nil, fmt.Errorf("expected issuer %q, got %q", c.Issuer, claims.Issuer)
+	if !claims.VerifyIssuer(pattern.Issuer, true) {
+		return nil, fmt.Errorf("expected issuer %q, got %q", pattern.Issuer, claims.Issuer)
 	}
 	if claims.SAMLSession != true {
 		return nil, errors.New("expected saml-session")

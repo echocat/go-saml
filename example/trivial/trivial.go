@@ -2,53 +2,62 @@ package main
 
 import (
 	"context"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
+	"encoding/json"
+	"github.com/echocat/go-saml/samlsp"
 	"net/http"
 	"net/url"
-
-	"github.com/crewjam/saml/samlsp"
+	"time"
 )
 
 func hello(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hello, %s!", samlsp.AttributeFromContext(r.Context(), "cn"))
+	session := samlsp.SessionFromContext(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "   ")
+	_ = encoder.Encode(session)
 }
 
 func main() {
 	keyPair, err := tls.LoadX509KeyPair("myservice.cert", "myservice.key")
 	if err != nil {
-		panic(err) // TODO handle error
+		panic(err)
 	}
 	keyPair.Leaf, err = x509.ParseCertificate(keyPair.Certificate[0])
 	if err != nil {
-		panic(err) // TODO handle error
+		panic(err)
 	}
 
-	rootURL, _ := url.Parse("http://localhost:8000")
-	idpMetadataURL, _ := url.Parse("https://www.testshib.org/metadata/testshib-providers.xml")
-
-	idpMetadata, err := samlsp.FetchMetadata(
-		context.Background(),
-		http.DefaultClient,
-		*idpMetadataURL)
+	idpMetadataURL, err := url.Parse("https://login.microsoftonline.com/e4a8eac5-60d4-40e6-8b6c-dcde6f9abfb3/federationmetadata/2007-06/federationmetadata.xml?appid=3f676dc5-506e-4fcf-a88b-07c3d507858b")
 	if err != nil {
-		panic(err) // TODO handle error
+		panic(err)
 	}
 
-	samlSP, err := samlsp.New(samlsp.Options{
+	rootURL, err := url.Parse("https://localhost:8000")
+	if err != nil {
+		panic(err)
+	}
+
+	idpMetadata, err := samlsp.FetchMetadata(context.TODO(), http.DefaultClient, *idpMetadataURL)
+	if err != nil {
+		panic(err)
+	}
+
+	opts := samlsp.Options{
 		URL:         *rootURL,
-		IDPMetadata: idpMetadata,
-		Key:         keyPair.PrivateKey.(*rsa.PrivateKey),
+		Key:         keyPair.PrivateKey,
 		Certificate: keyPair.Leaf,
-	})
-	if err != nil {
-		panic(err) // TODO handle error
+		IDPMetadata: idpMetadata,
 	}
+	samlSP, _ := samlsp.New(opts)
+
+	samlSP.Session.(*samlsp.CookieSessionProvider).PatternProvider = samlsp.CookieSessionPatternProviderFor(time.Minute * 15)
 
 	app := http.HandlerFunc(hello)
 	http.Handle("/hello", samlSP.RequireAccount(app))
 	http.Handle("/saml/", samlSP)
-	http.ListenAndServe(":8000", nil)
+	if err := http.ListenAndServeTLS(":8000", "myservice.cert", "myservice.key", nil); err != nil {
+		panic(err)
+	}
 }

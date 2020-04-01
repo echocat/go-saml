@@ -1,6 +1,7 @@
 package samlsp
 
 import (
+	"context"
 	"net/http"
 )
 
@@ -23,7 +24,7 @@ type RequestTracker interface {
 	StopTrackingRequest(w http.ResponseWriter, r *http.Request, index string) error
 
 	// GetTrackedRequests returns all the pending tracked requests
-	GetTrackedRequests(r *http.Request) []TrackedRequest
+	GetTrackedRequests(r *http.Request) ([]TrackedRequest, error)
 
 	// GetTrackedRequest returns a pending tracked request.
 	GetTrackedRequest(r *http.Request, index string) (*TrackedRequest, error)
@@ -39,8 +40,8 @@ type TrackedRequest struct {
 // TrackedRequestCodec handles encoding and decoding of a TrackedRequest.
 type TrackedRequestCodec interface {
 	// Encode returns an encoded string representing the TrackedRequest.
-	Encode(value TrackedRequest) (string, error)
+	Encode(ctx context.Context, value TrackedRequest) (string, error)
 
 	// Decode returns a Tracked request from an encoded string.
-	Decode(signed string) (*TrackedRequest, error)
+	Decode(ctx context.Context, signed string) (*TrackedRequest, error)
 }

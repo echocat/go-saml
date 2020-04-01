@@ -1,6 +1,7 @@
 package saml
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/x509"
@@ -21,15 +22,15 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/crewjam/saml/logger"
-	"github.com/crewjam/saml/testsaml"
-	"github.com/crewjam/saml/xmlenc"
+	"github.com/echocat/go-saml/logger"
+	"github.com/echocat/go-saml/testsaml"
+	"github.com/echocat/go-saml/xmlenc"
 )
 
 type IdentityProviderTest struct {
 	SPKey         *rsa.PrivateKey
 	SPCertificate *x509.Certificate
-	SP            ServiceProvider
+	SP            DefaultServiceProvider
 
 	Key             crypto.PrivateKey
 	Certificate     *x509.Certificate
@@ -112,9 +113,11 @@ QLSouMM8o57h0uKjfTmuoWHLQLi6hnF+cvCsEFiJZ4AbF+DgmO6TarJ8O05t8zvn
 OwJlNCASPZRH/JmF8tX0hoHuAQ==
 -----END CERTIFICATE-----
 `)
-	test.SP = ServiceProvider{
-		Key:         test.SPKey,
-		Certificate: test.SPCertificate,
+	test.SP = DefaultServiceProvider{
+		CertificatePair: CertificatePair{
+			Key:         test.SPKey,
+			Certificate: test.SPCertificate,
+		},
 		MetadataURL: mustParseURL("https://sp.example.com/saml2/metadata"),
 		AcsURL:      mustParseURL("https://sp.example.com/saml2/acs"),
 		IDPMetadata: &EntityDescriptor{},
@@ -132,7 +135,7 @@ OwJlNCASPZRH/JmF8tX0hoHuAQ==
 		ServiceProviderProvider: &mockServiceProviderProvider{
 			GetServiceProviderFunc: func(r *http.Request, serviceProviderID string) (*EntityDescriptor, error) {
 				if serviceProviderID == test.SP.MetadataURL.String() {
-					return test.SP.Metadata(), nil
+					return GetMetadata(context.Background(), &test.SP)
 				}
 				return nil, os.ErrNotExist
 			},
@@ -247,7 +250,7 @@ func TestIDPCanHandleRequestWithNewSession(t *testing.T) {
 	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
-			fmt.Fprintf(w, "RelayState: %s\nSAMLRequest: %s",
+			_, _ = fmt.Fprintf(w, "RelayState: %s\nSAMLRequest: %s",
 				req.RelayState, req.RequestBuffer)
 			return nil
 		},
@@ -255,7 +258,7 @@ func TestIDPCanHandleRequestWithNewSession(t *testing.T) {
 
 	w := httptest.NewRecorder()
 
-	requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
+	requestURL, err := MakeRedirectAuthenticationRequest(context.Background(), &test.SP, "ThisIsTheRelayState")
 	assert.NoError(t, err)
 
 	decodedRequest, err := testsaml.ParseRedirectRequest(requestURL)
@@ -285,7 +288,7 @@ func TestIDPCanHandleRequestWithExistingSession(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
+	requestURL, err := MakeRedirectAuthenticationRequest(context.Background(), &test.SP, "ThisIsTheRelayState")
 	assert.NoError(t, err)
 
 	decodedRequest, err := testsaml.ParseRedirectRequest(requestURL)
@@ -314,7 +317,7 @@ func TestIDPCanHandlePostRequestWithExistingSession(t *testing.T) {
 
 	w := httptest.NewRecorder()
 
-	authRequest, err := test.SP.MakeAuthenticationRequest(test.SP.GetSSOBindingLocation(HTTPRedirectBinding))
+	authRequest, err := MakeAuthenticationRequest(context.Background(), &test.SP, test.SP.GetSSOBindingLocation(HTTPRedirectBinding))
 	assert.NoError(t, err)
 	authRequestBuf, err := xml.Marshal(authRequest)
 	assert.NoError(t, err)
@@ -838,7 +841,7 @@ func TestIDPIDPInitiatedNewSession(t *testing.T) {
 	test := NewIdentifyProviderTest()
 	test.IDP.SessionProvider = &mockSessionProvider{
 		GetSessionFunc: func(w http.ResponseWriter, r *http.Request, req *IdpAuthnRequest) *Session {
-			fmt.Fprintf(w, "RelayState: %s", req.RelayState)
+			_, _ = fmt.Fprintf(w, "RelayState: %s", req.RelayState)
 			return nil
 		},
 	}
@@ -1027,13 +1030,14 @@ func TestIDPCanHandleUnencryptedResponse(t *testing.T) {
 	assert.Equal(t, expectedResponseStr, responseStr)
 }
 
+//noinspection GoNilness
 func TestIDPRequestedAttributes(t *testing.T) {
 	test := NewIdentifyProviderTest()
 	metadata := EntityDescriptor{}
 	err := xml.Unmarshal([]byte(`<?xml version='1.0' encoding='UTF-8'?><md:EntityDescriptor ID='_85fdc505-39e4-4c20-a67f-ca15f4e4064a' entityID='https://dev.aa.kndr.org/users/auth/saml/metadata' xmlns:md='urn:oasis:names:tc:SAML:2.0:metadata' xmlns:saml='urn:oasis:names:tc:SAML:2.0:assertion'><md:SPSSODescriptor AuthnRequestsSigned='false' WantAssertionsSigned='false' protocolSupportEnumeration='urn:oasis:names:tc:SAML:2.0:protocol'><md:AssertionConsumerService Binding='urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST' Location='https://dev.aa.kndr.org/users/auth/saml/callback' index='0' isDefault='true'/><md:AttributeConsumingService index='1' isDefault='true'><md:ServiceName xml:lang='en'>Required attributes</md:ServiceName><md:RequestedAttribute FriendlyName='Email address' Name='email' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Full name' Name='name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Given name' Name='first_name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/><md:RequestedAttribute FriendlyName='Family name' Name='last_name' NameFormat='urn:oasis:names:tc:SAML:2.0:attrname-format:basic'/></md:AttributeConsumingService></md:SPSSODescriptor></md:EntityDescriptor>`), &metadata)
 	assert.NoError(t, err)
 
-	requestURL, err := test.SP.MakeRedirectAuthenticationRequest("ThisIsTheRelayState")
+	requestURL, err := MakeRedirectAuthenticationRequest(context.Background(), &test.SP, "ThisIsTheRelayState")
 	assert.NoError(t, err)
 
 	r, _ := http.NewRequest("GET", requestURL.String(), nil)

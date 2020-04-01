@@ -2,6 +2,7 @@ package samlsp
 
 import (
 	"bytes"
+	"context"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
@@ -21,8 +22,8 @@ import (
 	dsig "github.com/russellhaering/goxmldsig"
 	"github.com/stretchr/testify/assert"
 
-	"github.com/crewjam/saml"
-	"github.com/crewjam/saml/testsaml"
+	"github.com/echocat/go-saml"
+	"github.com/echocat/go-saml/testsaml"
 )
 
 type MiddlewareTest struct {
@@ -125,25 +126,28 @@ func NewMiddlewareTest() *MiddlewareTest {
 		panic(err)
 	}
 
-	sessionProvider := DefaultSessionProvider(opts)
-	sessionProvider.Name = "ttt"
-	sessionProvider.MaxAge = 7200 * time.Second
+	pSessionProvider, _ := NewSessionProvider(opts)
+	sessionProvider := pSessionProvider.(*CookieSessionProvider)
+	sessionProvider.PatternProvider = CookieSessionPatternProviderFor(7200 * time.Second)
 
-	sessionCodec := sessionProvider.Codec.(JWTSessionCodec)
-	sessionCodec.MaxAge = 7200 * time.Second
-	sessionProvider.Codec = sessionCodec
+	sessionCodec := sessionProvider.Codec.(*JWTSessionCodec)
+	sessionCodec.PatternProvider = JWTPatternProviderFor(JWTSessionPattern{
+		SigningMethod:   defaultJWTSigningMethod,
+		Audience:        opts.URL.String(),
+		Issuer:          opts.URL.String(),
+		MaxAge:          7200 * time.Second,
+		CertificatePair: optionsToCertificatePair(opts),
+	})
 
-	test.Middleware.Session = sessionProvider
-
-	test.Middleware.ServiceProvider.MetadataURL.Path = "/saml2/metadata"
-	test.Middleware.ServiceProvider.AcsURL.Path = "/saml2/acs"
-	test.Middleware.ServiceProvider.SloURL.Path = "/saml2/slo"
+	test.Middleware.ServiceProvider.(*saml.DefaultServiceProvider).MetadataURL.Path = "/saml2/metadata"
+	test.Middleware.ServiceProvider.(*saml.DefaultServiceProvider).AcsURL.Path = "/saml2/acs"
+	test.Middleware.ServiceProvider.(*saml.DefaultServiceProvider).SloURL.Path = "/saml2/slo"
 
 	var tc JWTSessionClaims
 	if err := json.Unmarshal(tokenJSON, &tc); err != nil {
 		panic(err)
 	}
-	test.expectedSessionCookie, err = sessionProvider.Codec.Encode(tc)
+	test.expectedSessionCookie, err = sessionProvider.Codec.Encode(context.Background(), tc)
 	if err != nil {
 		panic(err)
 	}
@@ -152,8 +156,8 @@ func NewMiddlewareTest() *MiddlewareTest {
 }
 
 func (test *MiddlewareTest) makeTrackedRequest(id string) string {
-	codec := test.Middleware.RequestTracker.(CookieRequestTracker).Codec
-	token, err := codec.Encode(TrackedRequest{
+	codec := test.Middleware.RequestTracker.(*CookieRequestTracker).Codec
+	token, err := codec.Encode(context.Background(), TrackedRequest{
 		Index:         "KCosLjAyNDY4Ojw-QEJERkhKTE5QUlRWWFpcXmBiZGZoamxucHJ0dnh6",
 		SAMLRequestID: id,
 		URI:           "/frob",
@@ -215,7 +219,7 @@ func TestMiddlewareFourOhFour(t *testing.T) {
 
 func TestMiddlewareRequireAccountNoCreds(t *testing.T) {
 	test := NewMiddlewareTest()
-	test.Middleware.ServiceProvider.AcsURL.Scheme = "http"
+	test.Middleware.ServiceProvider.(*saml.DefaultServiceProvider).AcsURL.Scheme = "http"
 
 	handler := test.Middleware.RequireAccount(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -269,7 +273,8 @@ func TestMiddlewareRequireAccountNoCredsSecure(t *testing.T) {
 
 func TestMiddlewareRequireAccountNoCredsPostBinding(t *testing.T) {
 	test := NewMiddlewareTest()
-	test.Middleware.ServiceProvider.IDPMetadata.IDPSSODescriptors[0].SingleSignOnServices = test.Middleware.ServiceProvider.IDPMetadata.IDPSSODescriptors[0].SingleSignOnServices[1:2]
+	test.Middleware.ServiceProvider.(*saml.DefaultServiceProvider).IDPMetadata.IDPSSODescriptors[0].SingleSignOnServices =
+		test.Middleware.ServiceProvider.(*saml.DefaultServiceProvider).IDPMetadata.IDPSSODescriptors[0].SingleSignOnServices[1:2]
 	assert.Equal(t, "",
 		test.Middleware.ServiceProvider.GetSSOBindingLocation(saml.HTTPRedirectBinding))
 
@@ -515,14 +520,14 @@ func TestMiddlewareDefaultCookieDomainIPv4(t *testing.T) {
 	test := NewMiddlewareTest()
 	ipv4Loopback := net.IP{127, 0, 0, 1}
 
-	sp := DefaultSessionProvider(Options{
+	sp, _ := NewSessionProvider(Options{
 		URL: mustParseURL("https://" + net.JoinHostPort(ipv4Loopback.String(), "54321")),
 		Key: test.Key,
 	})
 
 	req, _ := http.NewRequest("GET", "/", nil)
 	resp := httptest.NewRecorder()
-	sp.CreateSession(resp, req, &saml.Assertion{})
+	_ = sp.CreateSession(resp, req, &saml.Assertion{})
 
 	assert.True(t,
 		strings.Contains(resp.Header().Get("Set-Cookie"), "Domain=127.0.0.1;"),
@@ -534,14 +539,14 @@ func TestMiddlewareDefaultCookieDomainIPv6(t *testing.T) {
 
 	test := NewMiddlewareTest()
 
-	sp := DefaultSessionProvider(Options{
+	sp, _ := NewSessionProvider(Options{
 		URL: mustParseURL("https://" + net.JoinHostPort(net.IPv6loopback.String(), "54321")),
 		Key: test.Key,
 	})
 
 	req, _ := http.NewRequest("GET", "/", nil)
 	resp := httptest.NewRecorder()
-	sp.CreateSession(resp, req, &saml.Assertion{})
+	_ = sp.CreateSession(resp, req, &saml.Assertion{})
 
 	assert.True(t,
 		strings.Contains(resp.Header().Get("Set-Cookie"), "Domain=::1;"),

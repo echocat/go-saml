@@ -10,7 +10,7 @@ import (
 
 	"github.com/crewjam/httperr"
 
-	"github.com/crewjam/saml"
+	"github.com/echocat/go-saml"
 )
 
 // ParseMetadata parses arbitrary SAML IDP metadata.
@@ -54,6 +54,7 @@ func FetchMetadata(ctx context.Context, httpClient *http.Client, metadataURL url
 	if err != nil {
 		return nil, err
 	}
+	//noinspection GoUnhandledErrorResult
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		return nil, httperr.Response(*resp)

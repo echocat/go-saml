@@ -22,8 +22,8 @@ import (
 	"github.com/beevik/etree"
 	dsig "github.com/russellhaering/goxmldsig"
 
-	"github.com/crewjam/saml/logger"
-	"github.com/crewjam/saml/xmlenc"
+	"github.com/echocat/go-saml/logger"
+	"github.com/echocat/go-saml/xmlenc"
 )
 
 // Session represents a user session. It is returned by the
@@ -104,7 +104,7 @@ type IdentityProvider struct {
 	ValidDuration           *time.Duration
 }
 
-// Metadata returns the metadata structure for this identity provider.
+// GetMetadata returns the metadata structure for this identity provider.
 func (idp *IdentityProvider) Metadata() *EntityDescriptor {
 	certStr := base64.StdEncoding.EncodeToString(idp.Certificate.Raw)
 
@@ -183,10 +183,10 @@ func (idp *IdentityProvider) Handler() http.Handler {
 }
 
 // ServeMetadata is an http.HandlerFunc that serves the IDP metadata
-func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, r *http.Request) {
+func (idp *IdentityProvider) ServeMetadata(w http.ResponseWriter, _ *http.Request) {
 	buf, _ := xml.MarshalIndent(idp.Metadata(), "", "  ")
 	w.Header().Set("Content-Type", "application/samlmetadata+xml")
-	w.Write(buf)
+	_, _ = w.Write(buf)
 }
 
 // ServeSSO handles SAML auth requests.
@@ -363,7 +363,7 @@ func NewIdpAuthnRequest(idp *IdentityProvider, r *http.Request) (*IdpAuthnReques
 }
 
 // Validate checks that the authentication request is valid and assigns
-// the AuthnRequest and Metadata properties. Returns a non-nil error if the
+// the AuthnRequest and GetMetadata properties. Returns a non-nil error if the
 // request is not valid.
 func (req *IdpAuthnRequest) Validate() error {
 	if err := xml.Unmarshal(req.RequestBuffer, &req.Request); err != nil {

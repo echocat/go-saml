@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/crewjam/saml"
+	"github.com/echocat/go-saml"
 )
 
 // Session is an interface implemented to contain a session.
@@ -42,17 +42,17 @@ type SessionProvider interface {
 // Session. The default implementation uses JWTs, JWTSessionCodec.
 type SessionCodec interface {
 	// New creates a Session from the SAML assertion.
-	New(assertion *saml.Assertion) (Session, error)
+	New(ctx context.Context, assertion *saml.Assertion) (Session, error)
 
 	// Encode returns a serialized version of the Session.
 	//
 	// Note: When implementing this function, it is reasonable to expect that
 	// Session is of the exact type returned by New(), and panic if it is not.
-	Encode(s Session) (string, error)
+	Encode(ctx context.Context, s Session) (string, error)
 
 	// Decode parses the serialized session that may have been returned by Encode
 	// and returns a Session.
-	Decode(string) (Session, error)
+	Decode(ctx context.Context, in string) (Session, error)
 }
 
 type indexType int
@@ -76,6 +76,7 @@ func ContextWithSession(ctx context.Context, session Session) context.Context {
 
 // AttributeFromContext is a convenience method that returns the named attribute
 // from the session, if available.
+//noinspection GoUnusedExportedFunction
 func AttributeFromContext(ctx context.Context, name string) string {
 	s := SessionFromContext(ctx)
 	if s == nil {

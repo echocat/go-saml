@@ -1,24 +1,18 @@
 package samlsp
 
 import (
-	"crypto/rsa"
+	"context"
 	"fmt"
-	"time"
-
 	"github.com/dgrijalva/jwt-go"
 
-	"github.com/crewjam/saml"
+	"github.com/echocat/go-saml"
 )
 
 var defaultJWTSigningMethod = jwt.SigningMethodRS256
 
 // JWTTrackedRequestCodec encodes TrackedRequests as signed JWTs
 type JWTTrackedRequestCodec struct {
-	SigningMethod jwt.SigningMethod
-	Audience      string
-	Issuer        string
-	MaxAge        time.Duration
-	Key           *rsa.PrivateKey
+	PatternProvider JWTPatternProvider
 }
 
 var _ TrackedRequestCodec = JWTTrackedRequestCodec{}
@@ -31,41 +25,49 @@ type JWTTrackedRequestClaims struct {
 }
 
 // Encode returns an encoded string representing the TrackedRequest.
-func (s JWTTrackedRequestCodec) Encode(value TrackedRequest) (string, error) {
+func (s JWTTrackedRequestCodec) Encode(ctx context.Context, value TrackedRequest) (string, error) {
+	pattern, err := s.PatternProvider(ctx)
+	if err != nil {
+		return "", err
+	}
 	now := saml.TimeNow()
 	claims := JWTTrackedRequestClaims{
 		StandardClaims: jwt.StandardClaims{
-			Audience:  s.Audience,
-			ExpiresAt: now.Add(s.MaxAge).Unix(),
+			Audience:  pattern.Audience,
+			ExpiresAt: now.Add(pattern.MaxAge).Unix(),
 			IssuedAt:  now.Unix(),
-			Issuer:    s.Issuer,
+			Issuer:    pattern.Issuer,
 			NotBefore: now.Unix(), // TODO(ross): correct for clock skew
 			Subject:   value.Index,
 		},
 		TrackedRequest:   value,
 		SAMLAuthnRequest: true,
 	}
-	token := jwt.NewWithClaims(s.SigningMethod, claims)
-	return token.SignedString(s.Key)
+	token := jwt.NewWithClaims(pattern.SigningMethod, claims)
+	return token.SignedString(pattern.CertificatePair.Key)
 }
 
 // Decode returns a Tracked request from an encoded string.
-func (s JWTTrackedRequestCodec) Decode(signed string) (*TrackedRequest, error) {
+func (s JWTTrackedRequestCodec) Decode(ctx context.Context, signed string) (*TrackedRequest, error) {
+	pattern, err := s.PatternProvider(ctx)
+	if err != nil {
+		return nil, err
+	}
 	parser := jwt.Parser{
-		ValidMethods: []string{s.SigningMethod.Alg()},
+		ValidMethods: []string{pattern.SigningMethod.Alg()},
 	}
 	claims := JWTTrackedRequestClaims{}
-	_, err := parser.ParseWithClaims(signed, &claims, func(*jwt.Token) (interface{}, error) {
-		return s.Key.Public(), nil
+	_, err = parser.ParseWithClaims(signed, &claims, func(*jwt.Token) (interface{}, error) {
+		return pattern.CertificatePair.Certificate.PublicKey, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if !claims.VerifyAudience(s.Audience, true) {
-		return nil, fmt.Errorf("expected audience %q, got %q", s.Audience, claims.Audience)
+	if !claims.VerifyAudience(pattern.Audience, true) {
+		return nil, fmt.Errorf("expected audience %q, got %q", pattern.Audience, claims.Audience)
 	}
-	if !claims.VerifyIssuer(s.Issuer, true) {
-		return nil, fmt.Errorf("expected issuer %q, got %q", s.Issuer, claims.Issuer)
+	if !claims.VerifyIssuer(pattern.Issuer, true) {
+		return nil, fmt.Errorf("expected issuer %q, got %q", pattern.Issuer, claims.Issuer)
 	}
 	if claims.SAMLAuthnRequest != true {
 		return nil, fmt.Errorf("expected saml-authn-request")
